@@ -21,20 +21,49 @@ void	execute_operator_cmd(const Server::MsgTokens &tokenized_message, Client &op
 	if (command == "KICK")
 	{
 		//kick <channel> <client> [<optional comment>], param[1] = channel, param[2] = tager client
-		if (tokenized_message.params.size() < 2)
+		if (tokenized_message.params.size() < 1)
 		{
 			std::string errorMsg = ":server 461 "
 									+ operator_client.get_nick_name()
 									+ " KICK : use /kick <channel> <client> [<optional comment>]\r\n";
 			putstr_fd(errorMsg, operator_client.get_sockfd());
+			return;
 		}
-		Channel *channel = server.get_channel_by_name(tokenized_message.params[1]);
+		Channel *channel = server.get_channel_by_name(tokenized_message.params[0]);
 		if (!channel)
 		{
 			std::string errorMsg = ":server 403 "
 									+ operator_client.get_nick_name() + " "
-									+ tokenized_message.params[1]
+									+ tokenized_message.params[0]
 									+ " :No such channel\r\n";
+			putstr_fd(errorMsg, operator_client.get_sockfd());
+			return;
+		}
+		std::string target_nickname;
+		std::string comment;
+		if (tokenized_message. params.size() >= 2)
+		{
+			target_nickname = tokenized_message.params[1];
+			comment = target_nickname;
+		}
+		else if (!tokenized_message.trailing.empty())
+		{
+			// Create an input string stream from the trailing text.
+			std::istringstream iss(tokenized_message.trailing);
+			
+			// Extract the first word and assign it to target_nickname.
+			iss >> target_nickname;
+			
+			// Then, extract the rest of the trailing text into comment.
+			std::getline(iss, comment);
+			
+			// Remove any leading whitespace from the comment.
+			comment.erase(0, comment.find_first_not_of(" \t"));
+		}
+		else
+		{
+			std::string errorMsg = ":server 461 " + operator_client.get_nick_name() +
+								" KICK : use /kick <channel> <client> [<optional comment>]\r\n";
 			putstr_fd(errorMsg, operator_client.get_sockfd());
 			return;
 		}
@@ -47,8 +76,8 @@ void	execute_operator_cmd(const Server::MsgTokens &tokenized_message, Client &op
 									+ " :You're not channel operator\r\n";
 			putstr_fd(errorMsg, operator_client.get_sockfd());
 			return;
-		} 
-		kick_client(tokenized_message, *channel, tokenized_message.params[1], operator_client, server);
+		}
+		kick_client(*channel, tokenized_message.trailing, operator_client, server, comment);
 	}
 	else if (command == "INVITE")
 	{
@@ -111,7 +140,7 @@ void	execute_operator_cmd(const Server::MsgTokens &tokenized_message, Client &op
 	return;
 }
 
-void kick_client(const Server::MsgTokens &tokenized_message, Channel &channel, std::string target_nickname, Client &operator_client, Server &server)
+void kick_client(Channel &channel, std::string target_nickname, Client &operator_client, Server &server, std::string comment)
 {
 	std::vector<std::string> client_list = channel.get_client_list();
 	if (std::find(client_list.begin(), client_list.end(), target_nickname) == client_list.end())
@@ -128,12 +157,6 @@ void kick_client(const Server::MsgTokens &tokenized_message, Channel &channel, s
 	//if target client is found in the channel, remove them from client list, and operator list
 	channel.remove_client_from_list(target_nickname);
 	channel.remove_operator_from_channel(target_nickname);
-	//use default, or trailing as comment
-	std::string comment;
-	if (tokenized_message.trailing.empty())
-		comment = operator_client.get_nick_name();
-	else
-		comment = tokenized_message.trailing;
 	//build kick message
 	std::string kick_message = ":"
 								+ operator_client.get_nick_name() + "!"

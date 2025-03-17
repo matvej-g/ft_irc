@@ -73,6 +73,6 @@ class Server
 
 
 void	execute_operator_cmd(const Server::MsgTokens &tokenized_message, Client &operator_client, Server &server);
-void	kick_client(const Server::MsgTokens &tokenized_message, Channel &channel, std::string target_nickname, Client &operator_client, Server &server);
+void	kick_client(Channel &channel, std::string target_nickname, Client &operator_client, Server &server, std::string comment);
 void	invite_client(Channel &channel, std::string target_nickname, Client &operator_client, Server &server);
 void	set_topic(const Server::MsgTokens &tokenized_message, Channel &channel, Client &operator_client, Server &server);
