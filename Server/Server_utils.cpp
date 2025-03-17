@@ -43,3 +43,11 @@ Client* Server::get_client_by_nickname(const std::string &nickname)
 		return (NULL);
 	return &(_client[index]);
 }
+
+Channel* Server::get_channel_by_name(const std::string &channel_name)
+{
+	int index = get_channel_index_through_name(channel_name);
+	if (index < 0)
+		return nullptr;
+	return &(_channel[index]);
+}

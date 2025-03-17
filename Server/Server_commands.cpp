@@ -34,8 +34,7 @@ void Server::execute_command(struct msg_tokens tokenized_message, int client_ind
 	else if (tokenized_message.command == "KICK" || tokenized_message.command == "INVITE" ||
 		tokenized_message.command == "TOPIC") //|| tokenized_message.command == "MODE")
 	{
-		int channel_index = this->get_channel_index_through_name(tokenized_message.params[0]);
-		execute_operator_cmd(tokenized_message, this->_client[client_index], this->_channel[channel_index], *this);
+		execute_operator_cmd(tokenized_message, this->_client[client_index], *this);
 	}
     else
         execute_command(error_message("421", "Unknown command"), client_index);
@@ -128,15 +127,23 @@ void Server::commands_join(struct msg_tokens tokenized_message, int client_index
         channel_index = this->_channel.size() - 1;
     }
     this->commands_join_message_clients(tokenized_message.params[0], client_index);
-    //will putstr channel description later or error when no channeldescription
-    std::string description_message =   ":server 332 "
-                                        + this->_client[client_index].get_nick_name()
-                                        + " "
-                                        + tokenized_message.params[0]
-                                        + " :Hi bin die description\n";
-
-    putstr_fd(description_message, this->_client[client_index].get_sockfd());
-
+    //handle Channel description
+	if (this->_channel[channel_index].get_topic().empty())
+	{
+		std::string reply = ":server 331 " 
+							+ this->_client[client_index].get_nick_name() + " "
+							+ tokenized_message.params[0]
+							+ " :No topic is set\r\n";
+		putstr_fd(reply, this->_client[client_index].get_sockfd());
+	}
+	else
+	{
+		std::string reply = ":server 332 " 
+							+ this->_client[client_index].get_nick_name() + " "
+							+ tokenized_message.params[0]
+							+ " :" + this->_channel[channel_index].get_topic() + "\r\n";
+		putstr_fd(reply, this->_client[client_index].get_sockfd());
+	}
     // write a list of all clients in channel to new joined client
     std::string client_list_message =   ":server 353 "
                                         + this->_client[client_index].get_nick_name()
