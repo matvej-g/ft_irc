@@ -36,6 +36,36 @@ struct sockaddr_in Server::get_server_address()
     return (this->_server_address);
 }
 
+bool Server::valid_channel_index(int index)
+{
+	if (index < 0 || index >= static_cast<int>(_channel.size()))
+	{
+		std::cerr << "[ERROR] Invalid channel index: " << index << std::endl;
+		return (false);
+	}
+	return (true);
+}
+
+bool Server::valid_client_index(int index)
+{
+	if (index < 0 || index >= static_cast<int>(_client.size()))
+	{
+		std::cerr << "[ERROR] Invalid client index: " << index << std::endl;
+		return (false);
+	}
+	return (true);
+}
+
+/// @brief Removes disconnected clients from the client vector
+/// @details Iterates through the client vector and removes any clients that have a socket file descriptor of -1
+/// @note It uses a lambda function to remove the disconnected clients
+void Server::cleanup_disconnected_clients()
+{
+    _client.erase(std::remove_if(_client.begin(), _client.end(),
+                                 [](const Client &c) { return c.get_sockfd() == -1; }),
+                  _client.end());
+}
+
 Client* Server::get_client_by_nickname(const std::string &nickname)
 {
 	int index = get_client_index_through_name(nickname);

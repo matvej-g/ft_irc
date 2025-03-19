@@ -13,6 +13,9 @@
 #include <vector>
 #include <fcntl.h>
 #include <sstream>
+#include <algorithm>
+#include <unordered_map>
+
 
 class Server
 {
@@ -25,6 +28,22 @@ class Server
 			std::string                 trailing;
 		};
 
+		struct CommandHandler
+		{
+			void (Server::*handler)(Server::msg_tokens, int);
+		};
+
+		const std::unordered_map<std::string, CommandHandler> command_map
+		= {
+			{"JOIN",   {&Server::commands_join}},
+			{"NICK",   {&Server::commands_nick}},
+			{"USER",   {&Server::commands_user}},
+			{"PRIVMSG", {&Server::commands_message}},
+			{"PART",   {&Server::commands_part}},
+			{"PING",   {&Server::commands_ping}},
+			{"QUIT",   {&Server::commands_quit}}
+		};
+
         bool                            running;
         int                             _sockfd;
         int                             _port;
@@ -33,9 +52,9 @@ class Server
         std::vector<struct pollfd>      _poll_fd;
         std::vector<Channel>            _channel;
 		std::string						_password;
-        void                            create_socket();
-        void                            fill_socket_struct();
-        void                            bind_server_address();
+        bool                            create_socket();
+        bool                            fill_socket_struct();
+        bool                            bind_server_address();
         void                            init_poll_struct(int fd);
         void                            accept_client();
         void                            receive_data(int client_index);
@@ -56,14 +75,18 @@ class Server
 		void							send_error_message(int client_index, std::string error_code, std::string message);
 		void							disconnect_client(int client_index);
 		void                            commands_quit(struct msg_tokens tokenized_message, int client_index);
+		void                            put_str_fd(msg_tokens tokenized_message, int client_index);
+		void                            cleanup_disconnected_clients();
 
     public:
 		Server();
 		~Server();
+		bool                            valid_channel_index(int index);
+		bool                            valid_client_index(int index);
         int                             get_sockfd();
         int                             get_port();
         struct sockaddr_in              get_server_address();
-        void                            init(char **av);
+        bool                            init(char **av);
         void                            loop();
         void                            end();
 		typedef struct msg_tokens		MsgTokens;
@@ -71,8 +94,8 @@ class Server
 		Channel* 						get_channel_by_name(const std::string &channel_name);
 };
 
-
 void	execute_operator_cmd(const Server::MsgTokens &tokenized_message, Client &operator_client, Server &server);
-void	kick_client(Channel &channel, std::string target_nickname, Client &operator_client, Server &server, std::string comment);
+void	kick_client(const Server::MsgTokens tokenized_message, Channel &channel, std::string target_nickname, Client &operator_client, Server &server);
 void	invite_client(Channel &channel, std::string target_nickname, Client &operator_client, Server &server);
 void	set_topic(const Server::MsgTokens &tokenized_message, Channel &channel, Client &operator_client, Server &server);
+void	check_mode(const Server::MsgTokens &tokenized_message, Channel &channel, Client &operator_client, Server &server);

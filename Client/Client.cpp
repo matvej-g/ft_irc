@@ -8,7 +8,7 @@ void Client::set_sockfd(int new_sockfd)
     this->_sockfd = new_sockfd;
 }
 
-int Client::get_sockfd()
+int Client::get_sockfd() const
 {
     return (this->_sockfd);
 }
@@ -43,7 +43,7 @@ std::string Client::get_nick_name()
     return (this->_nick_name);
 }
 
-void Client::set_last_message(char *message)
+void Client::set_last_message(const std::string& message)
 {
     std::string temp_message(message);
 
