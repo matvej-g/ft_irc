@@ -1,25 +1,30 @@
-
 #include "Server.hpp"
 #include "../Channel/Channel.hpp"
 
 Server::Server()
 {
-    _client.reserve(100);
-	_channel.reserve(40);
+    try {
+        _client.reserve(100);
+        _channel.reserve(40);
+    } catch (const std::bad_alloc &e) {
+        std::cerr << "[ERROR] Memory allocation failed: " << e.what() << std::endl;
+        std::exit(EXIT_FAILURE);
+    }
 }
 
 Server::~Server()
 {
     std::cout << "Shutting down server..." << std::endl;
-
     for (auto &client : this->_client)
     {
-        close(client.get_sockfd());
+        if (client.get_sockfd() != -1)
+            close(client.get_sockfd());
     }
     this->_client.clear();
     this->_poll_fd.clear();
     this->_channel.clear();
-    close(this->_sockfd);
+    if (this->_sockfd != -1)
+        close(this->_sockfd);
 }
 
 Server::msg_tokens Server::error_message(std::string error_code, std::string message)
@@ -36,7 +41,7 @@ void Server::send_error_message(int client_index, std::string error_code, std::s
 		return;
     msg_tokens error_msg = error_message(error_code, message);
     std::string formatted_error = ":" + error_msg.command + " " + error_msg.params[0] + "\n";
-    putstr_fd(formatted_error, this->_client[client_index].get_sockfd());
+    send_to_client(formatted_error, this->_client[client_index]);
 }
 
 bool Server::create_socket()
@@ -121,25 +126,34 @@ bool Server::init(char **av)
 
 void Server::accept_client()
 {
-    struct sockaddr_in   temp_client_address;
-    socklen_t            temp_client_len;
+    struct sockaddr_in temp_client_address;
+    socklen_t temp_client_len = sizeof(temp_client_address);
 
-	int new_sockfd = accept(this->_sockfd, (struct sockaddr *)&temp_client_address, &temp_client_len);
-	if (new_sockfd < 0)
+    int new_sockfd = accept(this->_sockfd, (struct sockaddr *)&temp_client_address, &temp_client_len);
+    if (new_sockfd < 0)
+    {
+        if (errno == EWOULDBLOCK || errno == EAGAIN)
+            return ;
+        std::cerr << "[ERROR] Failed to accept client: " << strerror(errno) << std::endl;
+        return ;
+    }
+
+    try
 	{
-		if (errno == EWOULDBLOCK || errno == EAGAIN)
-			return;
-		std::cerr << "[ERROR] Failed to accept client: " << strerror(errno) << std::endl;
-		return ;
-	}
-	Client               new_client;
-	new_client.set_sockfd(new_sockfd);
-	new_client.set_address(temp_client_address);
-	new_client.set_len(temp_client_len);
-	new_client.set_nick_name("none");
-	std::cout << "[INFO] New client connected (fd: " << new_sockfd << ")" << std::endl;
-    this->_client.emplace_back(new_client);
-    this->init_poll_struct(new_client.get_sockfd());
+        Client new_client;
+        new_client.set_sockfd(new_sockfd);
+        new_client.set_address(temp_client_address);
+        new_client.set_len(temp_client_len);
+        new_client.set_nick_name("none");
+        std::cout << "[INFO] New client connected (fd: " << new_sockfd << ")" << std::endl;
+        this->_client.emplace_back(new_client);
+        this->init_poll_struct(new_client.get_sockfd());
+    }
+    catch (const std::bad_alloc &e)
+    {
+        std::cerr << "[ERROR] Memory allocation failed while adding client: " << e.what() << std::endl;
+        close(new_sockfd);
+    }
 }
 
 void Server::disconnect_client(int client_index)
@@ -150,12 +164,13 @@ void Server::disconnect_client(int client_index)
     std::cout << "Client " << nick << " disconnected." << std::endl;
 
     int client_fd = this->_client[client_index].get_sockfd();
-    close(client_fd);
 	_poll_fd.erase(
         std::remove_if(_poll_fd.begin(), _poll_fd.end(),
                        [client_fd](const struct pollfd &p)
 					   { return p.fd == client_fd; }),
         _poll_fd.end());
+	close(client_fd);
+	_client.erase(_client.begin() + client_index);
     for (auto &channel : _channel)
         channel.remove_client_from_list(nick);
 }
@@ -173,36 +188,36 @@ void Server::disconnect_client(int client_index)
 
 void Server::receive_data(int client_index)
 {
-	if (!valid_client_index(client_index) || _client[client_index].get_sockfd() == -1)
-		return;
-	if (client_index >= static_cast<int>(_client.size()))
-		return ;
+    if (!valid_client_index(client_index) || _client[client_index].get_sockfd() == -1)
+        return;
 
-    char buffer[1028];
+    char buffer[1024];
     int client_fd = _client[client_index].get_sockfd();
     int n = read(client_fd, buffer, sizeof(buffer) - 1);
 
     if (n < 0)
     {
         if (errno == EWOULDBLOCK || errno == EAGAIN)
-            return ;
-
-        std::cerr << "ERROR reading from socket (Client: "
-                  << _client[client_index].get_nick_name()
-                  << "): " << strerror(errno) << std::endl;
-
+            return;
+        std::cerr << "[ERROR] Read error from client " << client_fd << ": " << strerror(errno) << std::endl;
         send_error_message(client_index, "ERROR", strerror(errno));
         disconnect_client(client_index);
-        return ;
+        return;
     }
     if (n == 0)
     {
         disconnect_client(client_index);
-        return ;
+        return;
     }
 
     buffer[n] = '\0';
-    _client[client_index].append_last_message(buffer);
+    try
+	{
+        _client[client_index].append_last_message(buffer);
+    } catch (const std::exception &e)
+	{
+        std::cerr << "[ERROR] Failed to append message: " << e.what() << std::endl;
+    }
 }
 
 Server::msg_tokens Server::parse_message_line(std::string line)
@@ -264,12 +279,19 @@ void Server::loop()
 {
 	while (this->running)
 	{
-		if (poll(&_poll_fd[0], _poll_fd.size(), -1) == -1)
+		int ret = poll(&_poll_fd[0], _poll_fd.size(), -1);
+		if (ret == -1)
 		{
+			if (errno == EINTR)
+				continue ;
 			std::cerr << "[ERROR] Poll failure: " << strerror(errno) << std::endl;
+						if (_poll_fd.empty()) {
+				std::cerr << "[CRITICAL] No valid sockets remaining. Exiting...\n";
+				break ;
+			}
 			continue ;
 		}
-		for (size_t i = _poll_fd.size(); i-- > 0;) 
+        for (int i = _poll_fd.size() - 1; i >= 0; i--)
 		{
 			if (_poll_fd[i].revents & POLLIN)
 			{
@@ -279,15 +301,30 @@ void Server::loop()
 				{
 					int client_index = i - 1;
 					if (client_index >= 0 && client_index < static_cast<int>(_client.size()))
-                    {
+					{
 						receive_data(client_index);
-						if (client_index < static_cast<int>(_client.size()) && this->_client[client_index].get_last_message().back() == '\n')
+						if (client_index < static_cast<int>(_client.size()) && !_client[client_index].get_last_message().empty() && _client[client_index].get_last_message().back() == '\n')
 							handle_data(client_index);
 					}
 				}
 			}
+			if (i < (int)_poll_fd.size() && _poll_fd[i].revents & POLLOUT)
+			{
+				// Get the corresponding client
+				Client *client = get_client_by_fd(_poll_fd[i].fd);
+				// Attempt to flush the output buffer
+				ssize_t n = write(client->get_sockfd(), client->output_buffer.data(), client->output_buffer.size());
+				if (n > 0) {
+					client->output_buffer.erase(0, n); // Remove sent data
+				}
+				// If all data has been sent, remove POLLOUT flag.
+				if (client->output_buffer.empty()) {
+					_poll_fd[i].events &= ~POLLOUT;
+				}
+			}
 		}
-        cleanup_disconnected_clients();
+
+		cleanup_disconnected_clients();
 	}
 }
 
@@ -324,19 +361,29 @@ bool Server::authenticateClient(const msg_tokens &tokenized_message, int client_
 		{
 			std::string error_msg = ":server 464 " + this->_client[client_index].get_nick_name() +
 									" :Too many failed authentication attempts. Disconnecting...\n";
-			putstr_fd(error_msg, this->_client[client_index].get_sockfd());
+			send_to_client(error_msg, this->_client[client_index]);
 			std::string quit_msg = ":" + this->_client[client_index].get_nick_name() +
 								" QUIT :Excessive failed authentication\n";
-			putstr_fd(quit_msg, this->_client[client_index].get_sockfd());
+			send_to_client(quit_msg, this->_client[client_index]);
 			disconnect_client(client_index);
 			return (false);
 		}
 		std::string passwd_mismatch_msg = ":server 464 " + this->_client[client_index].get_nick_name() +
 										" :Incorrect password. Try again.\n";
-		putstr_fd(passwd_mismatch_msg, this->_client[client_index].get_sockfd());
+		send_to_client(passwd_mismatch_msg, this->_client[client_index]);
 		return (false);
 	}
 	this->_client[client_index].reset_failed_auth_attempts();
 	this->_client[client_index].set_authenticated(true);
 	return (true);
+}
+
+void Server::cleanup_empty_channels()
+{
+	for (int i = _channel.size() - 1; i >= 0; i--) {
+		// If the channel has no clients, remove it
+		if (_channel[i].get_client_list().empty()) {
+			_channel.erase(_channel.begin() + i);
+		}
+	}
 }
